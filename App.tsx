@@ -9,7 +9,7 @@ import ComplaintCard from './components/ComplaintCard';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [activeTab, setActiveTab] = useState<'my' | 'new' | 'community' | 'admin'>('new');
+  const [activeTab, setActiveTab] = useState<'my' | 'new' | 'community' | 'warden'>('new');
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
   const [showProfile, setShowProfile] = useState(false);
@@ -23,14 +23,15 @@ const App: React.FC = () => {
   const [filterFloor, setFilterFloor] = useState<number>(2);
   const [filterCategory, setFilterCategory] = useState<ComplaintCategory | 'All'>('All');
 
-  const isAdminMode = loginName.toLowerCase() === 'admin';
+  // TRIGGER: Detect Warden mode based on name input
+  const isWardenMode = loginName.toLowerCase() === 'warden';
 
   useEffect(() => {
     const savedUser = localStorage.getItem('svbh_session');
     if (savedUser) {
       const parsedUser = JSON.parse(savedUser) as UserProfile;
       setCurrentUser(parsedUser);
-      if (parsedUser.role === 'Admin') setActiveTab('admin');
+      if (parsedUser.role === 'Warden') setActiveTab('warden');
     }
     setLoading(false);
   }, []);
@@ -41,22 +42,22 @@ const App: React.FC = () => {
     setLoading(true);
     
     try {
-      if (isAdminMode) {
-        if (loginPassword === 'admin123') {
-          const adminUser: UserProfile = {
-            uid: 'ADMIN_ROOT',
+      if (isWardenMode) {
+        if (loginPassword === 'warden123') { // Warden default PIN
+          const wardenUser: UserProfile = {
+            uid: 'WARDEN_ROOT',
             name: 'Warden Admin',
-            email: 'admin@svbh.edu',
-            role: 'Admin',
+            email: 'warden@svbh.edu',
+            role: 'Warden',
             floor: 0,
             roomNumber: 'W-01',
-            regNo: 'ADMIN',
+            regNo: 'WARDEN',
             branch: 'Management'
           };
-          setCurrentUser(adminUser);
-          localStorage.setItem('svbh_session', JSON.stringify(adminUser));
-          setActiveTab('admin');
-        } else { throw new Error('Incorrect Admin PIN.'); }
+          setCurrentUser(wardenUser);
+          localStorage.setItem('svbh_session', JSON.stringify(wardenUser));
+          setActiveTab('warden');
+        } else { throw new Error('Incorrect Warden PIN.'); }
       } else {
         const qDir = query(collection(db, 'student_directory'), where('regNo', '==', loginRegNo.trim()));
         const snap = await getDocs(qDir);
@@ -113,20 +114,27 @@ const App: React.FC = () => {
         <div className="flex-1 flex flex-col items-center justify-center text-center">
             <div className="w-24 h-24 bg-gradient-to-tr from-indigo-500 to-purple-600 rounded-[2.5rem] flex items-center justify-center text-4xl shadow-2xl mb-6 animate-bounce">🏛️</div>
             <h1 className="text-4xl font-black text-white tracking-tight mb-2">SVBH HELP</h1>
-            <p className="text-slate-400 text-xs font-black uppercase tracking-[0.3em]">Mobile Support Portal</p>
+            <p className="text-slate-400 text-xs font-black uppercase tracking-[0.3em]">{isWardenMode ? 'Warden Access' : 'Mobile Support Portal'}</p>
         </div>
         
         <form onSubmit={handleLogin} className="w-full bg-white/10 backdrop-blur-2xl p-8 rounded-[3rem] border border-white/10 space-y-4 mb-4">
           <input required type="text" placeholder="Full Name" value={loginName} onChange={e => setLoginName(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500 transition-all outline-none" />
-          <input required type="text" placeholder="Registration Number" value={loginRegNo} onChange={e => setLoginRegNo(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500 transition-all outline-none" />
-          {isAdminMode ? (
-            <input required type="password" placeholder="Admin PIN" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} className="w-full bg-indigo-500/20 border border-indigo-500/30 p-5 rounded-2xl text-white font-bold outline-none" />
-          ) : (
-            <input type="text" placeholder="Room Number (Required once)" value={loginRoomNo} onChange={e => setLoginRoomNo(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 outline-none" />
+          
+          {/* LOGIN UI CHANGES: Hide RegNo/RoomNo for Warden */}
+          {!isWardenMode && (
+            <>
+              <input required type="text" placeholder="Registration Number" value={loginRegNo} onChange={e => setLoginRegNo(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500 transition-all outline-none" />
+              <input type="text" placeholder="Room Number (Required once)" value={loginRoomNo} onChange={e => setLoginRoomNo(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 outline-none" />
+            </>
           )}
+
+          {isWardenMode && (
+            <input required type="password" placeholder="Warden PIN" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} className="w-full bg-indigo-500/20 border border-indigo-500/30 p-5 rounded-2xl text-white font-bold outline-none animate-in fade-in slide-in-from-top-2" />
+          )}
+
           {loginError && <p className="text-rose-400 text-[10px] font-black uppercase text-center">{loginError}</p>}
           <button type="submit" disabled={loading} className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black uppercase tracking-widest active:scale-95 transition-all shadow-xl">
-            {loading ? 'SECURE LOGIN...' : 'SIGN IN'}
+            {loading ? 'AUTHENTICATING...' : 'SIGN IN'}
           </button>
         </form>
         <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest pb-4">Secured by SVBH IT Dept</p>
@@ -166,6 +174,7 @@ const App: React.FC = () => {
           </>
         ) : (
           <div className="space-y-4">
+            <h2 className="text-xl font-black text-slate-900 px-1">Warden Dashboard</h2>
             <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 grid grid-cols-2 gap-3 mb-6">
                <select value={filterFloor} onChange={e => setFilterFloor(parseInt(e.target.value))} className="bg-slate-50 p-3 rounded-xl font-black text-xs border-none ring-1 ring-slate-100">
                   {[0,1,2,3,4,5,6,7].map(f => <option key={f} value={f}>Floor {f}</option>)}
@@ -174,9 +183,14 @@ const App: React.FC = () => {
                   <option value="All">All Types</option>
                   <option value="Electrical">⚡ Electrical</option>
                   <option value="Plumbing">🚰 Plumbing</option>
+                  <option value="Cleanliness">🧹 Cleanliness</option>
                </select>
             </div>
-            {complaints.map(c => <ComplaintCard key={c.id} complaint={c} isAdmin onStatusUpdate={(id, status) => updateComplaintStatus(id, status).then(loadData)} />)}
+            {complaints.length > 0 ? (
+              complaints.map(c => <ComplaintCard key={c.id} complaint={c} isWarden onStatusUpdate={(id, status) => updateComplaintStatus(id, status).then(loadData)} />)
+            ) : (
+              <div className="text-center py-20 opacity-30 font-black uppercase text-xs tracking-widest">No complaints on this floor</div>
+            )}
           </div>
         )}
       </main>
@@ -190,7 +204,7 @@ const App: React.FC = () => {
             <NavItem icon="📋" label="History" active={activeTab === 'my'} onClick={() => setActiveTab('my')} />
           </>
         ) : (
-          <button onClick={() => { localStorage.removeItem('svbh_session'); window.location.reload(); }} className="w-full bg-rose-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-rose-200">LOGOUT PORTAL</button>
+          <button onClick={() => { localStorage.removeItem('svbh_session'); window.location.reload(); }} className="w-full bg-rose-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-rose-200">LOGOUT WARDEN PORTAL</button>
         )}
       </nav>
 
@@ -203,7 +217,7 @@ const App: React.FC = () => {
              <div className="text-center mb-8">
                 <div className="h-20 w-20 bg-indigo-600 text-white rounded-[2rem] mx-auto flex items-center justify-center text-3xl font-black mb-4 shadow-xl">{currentUser.name.charAt(0)}</div>
                 <h3 className="text-2xl font-black text-slate-900">{currentUser.name}</h3>
-                <p className="text-indigo-600 font-black text-[10px] uppercase tracking-widest">{currentUser.regNo}</p>
+                <p className="text-indigo-600 font-black text-[10px] uppercase tracking-widest">{currentUser.role === 'Warden' ? 'Staff' : currentUser.regNo}</p>
              </div>
              <div className="space-y-3">
                 <button onClick={() => setShowProfile(false)} className="w-full py-5 bg-slate-100 rounded-2xl font-black uppercase tracking-widest text-xs">Close Profile</button>

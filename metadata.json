@@ -1,0 +1,5 @@
+{
+  "name": "SVBH Hostel Complaint Portal",
+  "description": "A high-performance hostel management system optimized for Firebase Free Tier, allowing students to report issues and admins to manage them efficiently across 7 floors.",
+  "requestFramePermissions": []
+}

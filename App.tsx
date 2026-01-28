@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { UserProfile, Complaint, ComplaintCategory, ComplaintStatus } from './types';
-import { fetchMyComplaints, fetchCommunityComplaints, fetchComplaintsByFloor, updateComplaintStatus, toggleSupport } from './services/complaintService';
+import { fetchMyComplaints, fetchCommunityComplaints, fetchFilteredComplaints, updateComplaintStatus, toggleSupport } from './services/complaintService';
 import { db } from './services/firebase';
 import { collection, query, where, getDocs, doc, getDoc, setDoc } from "firebase/firestore";
 import ComplaintForm from './components/ComplaintForm';
@@ -20,7 +20,8 @@ const App: React.FC = () => {
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  const [filterFloor, setFilterFloor] = useState<number>(2);
+  // Warden Filter States: 0 means All Floors
+  const [filterFloor, setFilterFloor] = useState<number>(0);
   const [filterCategory, setFilterCategory] = useState<ComplaintCategory | 'All'>('All');
 
   // TRIGGER: Detect Warden mode based on name input
@@ -97,13 +98,19 @@ const App: React.FC = () => {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const data = activeTab === 'my' 
-        ? await fetchMyComplaints(currentUser.uid) 
-        : activeTab === 'community' 
-          ? await fetchCommunityComplaints(currentUser.floor)
-          : await fetchComplaintsByFloor(filterFloor, filterCategory === 'All' ? undefined : filterCategory);
-      setComplaints(data);
-    } catch (e) { console.warn("Sync failed."); } finally { setLoading(false); }
+      if (currentUser.role === 'Warden' || activeTab === 'warden') {
+        const data = await fetchFilteredComplaints(filterFloor, filterCategory);
+        setComplaints(data);
+      } else {
+        const data = activeTab === 'my' 
+          ? await fetchMyComplaints(currentUser.uid) 
+          : await fetchCommunityComplaints(currentUser.floor);
+        setComplaints(data);
+      }
+    } catch (e) { 
+      console.warn("Sync failed.", e); 
+      setComplaints([]);
+    } finally { setLoading(false); }
   };
 
   useEffect(() => { loadData(); }, [currentUser, activeTab, filterFloor, filterCategory]);
@@ -120,7 +127,6 @@ const App: React.FC = () => {
         <form onSubmit={handleLogin} className="w-full bg-white/10 backdrop-blur-2xl p-8 rounded-[3rem] border border-white/10 space-y-4 mb-4">
           <input required type="text" placeholder="Full Name" value={loginName} onChange={e => setLoginName(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500 transition-all outline-none" />
           
-          {/* LOGIN UI CHANGES: Hide RegNo/RoomNo for Warden */}
           {!isWardenMode && (
             <>
               <input required type="text" placeholder="Registration Number" value={loginRegNo} onChange={e => setLoginRegNo(e.target.value)} className="w-full bg-white/5 border-none p-5 rounded-2xl text-white font-bold placeholder:text-slate-500 focus:ring-2 focus:ring-indigo-500 transition-all outline-none" />
@@ -144,7 +150,6 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen w-full bg-slate-50 flex flex-col overflow-hidden">
-      {/* MOBILE HEADER */}
       <header className="bg-[#0f172a] pt-[env(safe-area-inset-top,20px)] pb-6 px-6 rounded-b-[2.5rem] shadow-2xl z-50">
         <div className="flex justify-between items-center mt-4">
           <div>
@@ -160,42 +165,68 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* SCROLLABLE MAIN CONTENT */}
-      <main className="flex-1 overflow-y-auto custom-scroll p-6 pb-32">
+      <main className="flex-1 overflow-y-auto custom-scroll pb-32">
         {currentUser.role === 'Student' ? (
-          <>
+          <div className="p-6">
             {activeTab === 'new' && <ComplaintForm user={currentUser} onSuccess={() => setActiveTab('my')} />}
             {(activeTab === 'my' || activeTab === 'community') && (
               <div className="space-y-4">
                 <h2 className="text-xl font-black text-slate-900 px-1">{activeTab === 'my' ? 'My Activity' : 'Public Feed'}</h2>
-                {complaints.map(c => <ComplaintCard key={c.id} complaint={c} currentUserUid={currentUser.uid} onSupportToggle={id => toggleSupport(id, currentUser.uid).then(loadData)} />)}
+                {complaints.length > 0 ? (
+                  complaints.map(c => <ComplaintCard key={c.id} complaint={c} currentUserUid={currentUser.uid} onSupportToggle={id => toggleSupport(id, currentUser.uid).then(loadData)} />)
+                ) : (
+                  <div className="text-center py-20 opacity-20 font-black uppercase text-[10px] tracking-widest">Nothing to show</div>
+                )}
               </div>
             )}
-          </>
+          </div>
         ) : (
           <div className="space-y-4">
-            <h2 className="text-xl font-black text-slate-900 px-1">Warden Dashboard</h2>
-            <div className="bg-white p-4 rounded-3xl shadow-sm border border-slate-200 grid grid-cols-2 gap-3 mb-6">
-               <select value={filterFloor} onChange={e => setFilterFloor(parseInt(e.target.value))} className="bg-slate-50 p-3 rounded-xl font-black text-xs border-none ring-1 ring-slate-100">
-                  {[0,1,2,3,4,5,6,7].map(f => <option key={f} value={f}>Floor {f}</option>)}
-               </select>
-               <select value={filterCategory} onChange={e => setFilterCategory(e.target.value as any)} className="bg-slate-50 p-3 rounded-xl font-black text-xs border-none ring-1 ring-slate-100">
-                  <option value="All">All Types</option>
-                  <option value="Electrical">⚡ Electrical</option>
-                  <option value="Plumbing">🚰 Plumbing</option>
-                  <option value="Cleanliness">🧹 Cleanliness</option>
-               </select>
+            {/* WARDEN FILTER AREA */}
+            <div className="bg-white px-6 py-6 border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-black text-slate-900 tracking-tight">Manage Feed</h2>
+                <div className="flex items-center bg-slate-100 rounded-xl px-3 py-1.5 gap-2 border border-slate-200">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Floor:</span>
+                  <select 
+                    value={filterFloor} 
+                    onChange={e => setFilterFloor(parseInt(e.target.value))} 
+                    className="bg-transparent font-black text-[10px] uppercase text-indigo-600 border-none outline-none cursor-pointer"
+                  >
+                    <option value={0}>All Floors</option>
+                    {[1,2,3,4,5,6,7].map(f => <option key={f} value={f}>Floor {f}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {/* CATEGORY CHIPS */}
+              <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+                {['All', 'Electrical', 'Plumbing', 'Cleanliness', 'Mess', 'Other'].map(cat => (
+                  <button 
+                    key={cat} 
+                    onClick={() => setFilterCategory(cat as any)} 
+                    className={`whitespace-nowrap px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all active-scale ${filterCategory === cat ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-slate-100 text-slate-500'}`}
+                  >
+                    {cat === 'All' ? '📌' : cat === 'Electrical' ? '⚡' : cat === 'Plumbing' ? '🚰' : cat === 'Cleanliness' ? '🧹' : cat === 'Mess' ? '🍱' : '📝'} {cat}
+                  </button>
+                ))}
+              </div>
             </div>
-            {complaints.length > 0 ? (
-              complaints.map(c => <ComplaintCard key={c.id} complaint={c} isWarden onStatusUpdate={(id, status) => updateComplaintStatus(id, status).then(loadData)} />)
-            ) : (
-              <div className="text-center py-20 opacity-30 font-black uppercase text-xs tracking-widest">No complaints on this floor</div>
-            )}
+
+            <div className="p-6 pt-0 space-y-4">
+              {complaints.length > 0 ? (
+                complaints.map(c => <ComplaintCard key={c.id} complaint={c} isWarden onStatusUpdate={(id, status) => updateComplaintStatus(id, status).then(loadData)} />)
+              ) : (
+                <div className="text-center py-20 opacity-30 font-black uppercase text-xs tracking-widest">
+                  No {filterCategory !== 'All' ? filterCategory : ''} reports 
+                  {filterFloor !== 0 ? ` on floor ${filterFloor}` : ''}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </main>
 
-      {/* NATIVE-STYLE BOTTOM NAV */}
       <nav className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-3xl border-t border-slate-100 px-8 pt-4 pb-[calc(1.5rem+var(--safe-area-inset-bottom))] flex justify-around items-center z-50">
         {currentUser.role === 'Student' ? (
           <>
@@ -204,11 +235,13 @@ const App: React.FC = () => {
             <NavItem icon="📋" label="History" active={activeTab === 'my'} onClick={() => setActiveTab('my')} />
           </>
         ) : (
-          <button onClick={() => { localStorage.removeItem('svbh_session'); window.location.reload(); }} className="w-full bg-rose-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-rose-200">LOGOUT WARDEN PORTAL</button>
+          <div className="w-full flex gap-3">
+             <button onClick={loadData} className="flex-1 bg-indigo-50 text-indigo-600 py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-95 transition-all">REFRESH LIST</button>
+             <button onClick={() => { localStorage.removeItem('svbh_session'); window.location.reload(); }} className="flex-1 bg-rose-500 text-white py-4 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-xl shadow-rose-200 active:scale-95 transition-all">LOGOUT</button>
+          </div>
         )}
       </nav>
 
-      {/* PROFILE MODAL */}
       {showProfile && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center p-4">
           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setShowProfile(false)}></div>
@@ -217,7 +250,7 @@ const App: React.FC = () => {
              <div className="text-center mb-8">
                 <div className="h-20 w-20 bg-indigo-600 text-white rounded-[2rem] mx-auto flex items-center justify-center text-3xl font-black mb-4 shadow-xl">{currentUser.name.charAt(0)}</div>
                 <h3 className="text-2xl font-black text-slate-900">{currentUser.name}</h3>
-                <p className="text-indigo-600 font-black text-[10px] uppercase tracking-widest">{currentUser.role === 'Warden' ? 'Staff' : currentUser.regNo}</p>
+                <p className="text-indigo-600 font-black text-[10px] uppercase tracking-widest">{currentUser.role === 'Warden' ? 'STAFF' : currentUser.regNo}</p>
              </div>
              <div className="space-y-3">
                 <button onClick={() => setShowProfile(false)} className="w-full py-5 bg-slate-100 rounded-2xl font-black uppercase tracking-widest text-xs">Close Profile</button>

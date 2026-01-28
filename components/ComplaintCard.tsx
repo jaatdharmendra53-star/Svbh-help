@@ -1,4 +1,4 @@
-
+ 
 import React, { useState } from 'react';
 import { Complaint, ComplaintStatus } from '../types';
 
@@ -26,7 +26,8 @@ const ComplaintCard: React.FC<Props> = ({ complaint, isAdmin, currentUserUid, on
       onStatusUpdate?.(complaint.id!, 'Resolved');
       setIsVerifying(false);
     } else {
-      alert("Incorrect Code");
+      alert("Incorrect Code. Please check with the student.");
+      setOtpInput('');
     }
   };
 
@@ -77,21 +78,53 @@ const ComplaintCard: React.FC<Props> = ({ complaint, isAdmin, currentUserUid, on
         </div>
 
         <div className="flex gap-2">
-          {isAdmin && complaint.status !== 'Resolved' && (
-            isVerifying ? (
-              <form onSubmit={handleOtpSubmit} className="flex gap-1">
-                <input autoFocus type="text" maxLength={4} value={otpInput} onChange={e => setOtpInput(e.target.value.replace(/\D/g,''))} placeholder="PIN" className="w-14 bg-slate-100 border-none rounded-lg text-center font-black text-xs" />
-                <button type="submit" className="bg-emerald-500 text-white px-3 py-2 rounded-lg text-[9px] font-black uppercase">Verify</button>
-              </form>
-            ) : (
-              <div className="flex gap-2">
-                <button onClick={() => onStatusUpdate?.(complaint.id!, 'In Progress')} className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-lg active-scale">Start</button>
-                <button onClick={() => setIsVerifying(true)} className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-lg active-scale">Done</button>
-              </div>
-            )
+          {isAdmin && (
+            <>
+              {complaint.status === 'Pending' && (
+                <button 
+                  onClick={() => onStatusUpdate?.(complaint.id!, 'In Progress')} 
+                  className="bg-indigo-600 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-lg active-scale transition-all"
+                >
+                  Start Work
+                </button>
+              )}
+
+              {complaint.status === 'In Progress' && (
+                isVerifying ? (
+                  <form onSubmit={handleOtpSubmit} className="flex gap-1 animate-in slide-in-from-right-2 duration-200">
+                    <input 
+                      autoFocus 
+                      type="text" 
+                      maxLength={4} 
+                      value={otpInput} 
+                      onChange={e => setOtpInput(e.target.value.replace(/\D/g,''))} 
+                      placeholder="PIN" 
+                      className="w-14 bg-slate-100 border-none rounded-lg text-center font-black text-xs outline-none focus:ring-1 focus:ring-emerald-500" 
+                    />
+                    <button type="submit" className="bg-emerald-500 text-white px-3 py-2 rounded-lg text-[9px] font-black uppercase shadow-sm">
+                      Verify
+                    </button>
+                    <button 
+                      type="button" 
+                      onClick={() => { setIsVerifying(false); setOtpInput(''); }} 
+                      className="text-slate-300 px-1 text-[10px] font-black active:text-rose-500 transition-colors"
+                    >
+                      ✕
+                    </button>
+                  </form>
+                ) : (
+                  <button 
+                    onClick={() => setIsVerifying(true)} 
+                    className="bg-emerald-500 text-white px-4 py-2 rounded-xl text-[9px] font-black uppercase shadow-lg active-scale transition-all"
+                  >
+                    Resolve
+                  </button>
+                )
+              )}
+            </>
           )}
           
-          {(!isAdmin && (complaint.locationType === 'Washroom' || complaint.locationType === 'Mess')) && (
+          {(!isAdmin && (complaint.locationType === 'Washroom' || complaint.locationType === 'Mess')) && complaint.status !== 'Resolved' && (
             <button onClick={() => onSupportToggle?.(complaint.id!)} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black active-scale border transition-all ${complaint.supportUids?.includes(currentUserUid || '') ? 'bg-indigo-600 text-white border-none shadow-lg' : 'bg-white text-slate-400 border-slate-200'}`}>
               🤝 {complaint.supportUids?.length || 0} Me too
             </button>

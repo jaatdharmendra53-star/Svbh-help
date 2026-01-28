@@ -9,7 +9,9 @@ import {
   where, 
   arrayUnion, 
   arrayRemove,
-  getDoc
+  getDoc,
+  orderBy,
+  QueryConstraint
 } from "firebase/firestore";
 import { db } from './firebase';
 import { Complaint, ComplaintStatus, ComplaintCategory } from '../types';
@@ -53,15 +55,16 @@ const sanitizeData = (docId: string, data: any): Complaint => {
 };
 
 export const fetchMyComplaints = async (uid: string): Promise<Complaint[]> => {
-  const q = query(collection(db, COMPLAINTS_COL), where('uid', '==', uid));
+  const q = query(
+    collection(db, COMPLAINTS_COL), 
+    where('uid', '==', uid),
+    orderBy('timestamp', 'desc')
+  );
   const snapshot = await getDocs(q);
-  return snapshot.docs
-    .map(doc => sanitizeData(doc.id, doc.data()))
-    .sort((a, b) => b.timestamp - a.timestamp);
+  return snapshot.docs.map(doc => sanitizeData(doc.id, doc.data()));
 };
 
 export const fetchCommunityComplaints = async (floor: number): Promise<Complaint[]> => {
-  // Washrooms on same floor OR any Mess complaint
   const washroomQuery = query(
     collection(db, COMPLAINTS_COL),
     where('floor', '==', floor),
@@ -76,15 +79,30 @@ export const fetchCommunityComplaints = async (floor: number): Promise<Complaint
   return results.sort((a, b) => b.timestamp - a.timestamp);
 };
 
-export const fetchComplaintsByFloor = async (
-  floor: number, 
-  category?: ComplaintCategory, 
+export const fetchFilteredComplaints = async (
+  floor: number, // 0 means All Floors
+  category?: ComplaintCategory | 'All',
   status?: ComplaintStatus
 ): Promise<Complaint[]> => {
-  let q = query(collection(db, COMPLAINTS_COL), where('floor', '==', floor));
-  if (category) q = query(q, where('complaintCategory', '==', category));
-  if (status) q = query(q, where('status', '==', status));
+  const constraints: QueryConstraint[] = [];
+  
+  if (floor !== 0) {
+    constraints.push(where('floor', '==', floor));
+  }
+  
+  if (category && category !== 'All') {
+    constraints.push(where('complaintCategory', '==', category));
+  }
+  
+  if (status) {
+    constraints.push(where('status', '==', status));
+  }
+
+  // Note: Firestore requires composite indexes for multiple where + orderby.
+  // Using simple queries and manual sorting to stay within Free Tier limits.
+  const q = query(collection(db, COMPLAINTS_COL), ...constraints);
   const snapshot = await getDocs(q);
+  
   return snapshot.docs
     .map(doc => sanitizeData(doc.id, doc.data()))
     .sort((a, b) => b.timestamp - a.timestamp);

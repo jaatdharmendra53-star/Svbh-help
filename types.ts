@@ -2,7 +2,7 @@
 export type ComplaintStatus = 'Pending' | 'In Progress' | 'Resolved';
 export type ComplaintCategory = 'Electrical' | 'Plumbing' | 'Cleanliness' | 'Mess' | 'Other';
 export type LocationType = 'Room' | 'Washroom' | 'Mess';
-export type UserRole = 'Student' | 'Admin';
+export type UserRole = 'Student' | 'Warden';
 
 export interface UserProfile {
   uid: string;

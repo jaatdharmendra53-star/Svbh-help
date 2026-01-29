@@ -55,13 +55,16 @@ const sanitizeData = (docId: string, data: any): Complaint => {
 };
 
 export const fetchMyComplaints = async (uid: string): Promise<Complaint[]> => {
+  // Removing orderBy here because it requires a composite index (uid + timestamp).
+  // We sort manually in-memory to keep it Free-Tier friendly.
   const q = query(
     collection(db, COMPLAINTS_COL), 
-    where('uid', '==', uid),
-    orderBy('timestamp', 'desc')
+    where('uid', '==', uid)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => sanitizeData(doc.id, doc.data()));
+  return snapshot.docs
+    .map(doc => sanitizeData(doc.id, doc.data()))
+    .sort((a, b) => b.timestamp - a.timestamp);
 };
 
 export const fetchCommunityComplaints = async (floor: number): Promise<Complaint[]> => {
@@ -98,8 +101,6 @@ export const fetchFilteredComplaints = async (
     constraints.push(where('status', '==', status));
   }
 
-  // Note: Firestore requires composite indexes for multiple where + orderby.
-  // Using simple queries and manual sorting to stay within Free Tier limits.
   const q = query(collection(db, COMPLAINTS_COL), ...constraints);
   const snapshot = await getDocs(q);
   

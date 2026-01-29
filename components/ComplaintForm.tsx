@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ComplaintCategory, LocationType, UserProfile } from '../types';
 import { addComplaint } from '../services/complaintService';
@@ -25,12 +24,13 @@ const ComplaintForm: React.FC<Props> = ({ user, onSuccess }) => {
   useEffect(() => {
     if (locationType === 'Mess') setCategory('Mess');
     else if (category === 'Mess') setCategory('Electrical');
-  }, [locationType]);
+  }, [locationType, category]);
 
   const handleAiAssist = async () => {
     if (description.length < 5) return;
     setAiLoading(true);
     try {
+      // Initialize GenAI inside the handler to ensure up-to-date config
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
@@ -40,20 +40,29 @@ const ComplaintForm: React.FC<Props> = ({ user, onSuccess }) => {
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              suggestedCategory: { type: Type.STRING },
-              refinedDescription: { type: Type.STRING }
+              suggestedCategory: { type: Type.STRING, description: "One of: Electrical, Plumbing, Cleanliness, Other" },
+              refinedDescription: { type: Type.STRING, description: "A professionally rewritten description" }
             },
-            required: ["suggestedCategory", "refinedDescription"]
+            propertyOrdering: ["suggestedCategory", "refinedDescription"]
           }
         }
       });
-      const data = JSON.parse(response.text || '{}');
-      if (data.suggestedCategory) {
-        const valid: any = ['Electrical', 'Plumbing', 'Cleanliness', 'Other'];
-        if (valid.includes(data.suggestedCategory)) setCategory(data.suggestedCategory);
+      
+      // Access the text property directly (not a method call)
+      const resultText = response.text;
+      if (resultText) {
+        const data = JSON.parse(resultText.trim());
+        if (data.suggestedCategory) {
+          const valid: any = ['Electrical', 'Plumbing', 'Cleanliness', 'Other'];
+          if (valid.includes(data.suggestedCategory)) setCategory(data.suggestedCategory);
+        }
+        if (data.refinedDescription) setDescription(data.refinedDescription);
       }
-      if (data.refinedDescription) setDescription(data.refinedDescription);
-    } catch (err) { console.error(err); } finally { setAiLoading(false); }
+    } catch (err) { 
+      console.error("AI Assist failed:", err); 
+    } finally { 
+      setAiLoading(false); 
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -79,7 +88,11 @@ const ComplaintForm: React.FC<Props> = ({ user, onSuccess }) => {
         washroomBlock: locationType === 'Washroom' ? washroomBlock : undefined
       });
       onSuccess();
-    } catch (error) { alert('Submission failed.'); } finally { setLoading(false); }
+    } catch (error) { 
+      alert('Submission failed.'); 
+    } finally { 
+      setLoading(false); 
+    }
   };
 
   return (

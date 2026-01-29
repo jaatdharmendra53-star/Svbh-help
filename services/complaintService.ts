@@ -1,7 +1,6 @@
 
 import { 
   collection, 
-  addDoc, 
   getDocs, 
   updateDoc, 
   doc, 
@@ -12,6 +11,7 @@ import {
   getDoc,
   orderBy,
   limit,
+  addDoc,
   QueryConstraint
 } from "firebase/firestore";
 import { db } from './firebase';
@@ -19,9 +19,9 @@ import { Complaint, ComplaintStatus, ComplaintCategory } from '../types';
 
 const COMPLAINTS_COL = 'complaints';
 const FETCH_LIMIT = 50;
-const DAYS_TO_FETCH = 15;
+const RESOLVED_DAYS_LIMIT = 3;
 
-const getCutoffTimestamp = () => Date.now() - (DAYS_TO_FETCH * 24 * 60 * 60 * 1000);
+const getResolvedCutoff = () => Date.now() - (RESOLVED_DAYS_LIMIT * 24 * 60 * 60 * 1000);
 
 const sanitizeData = (docId: string, data: any): Complaint => {
   const sanitized: any = {
@@ -59,52 +59,68 @@ const sanitizeData = (docId: string, data: any): Complaint => {
   return sanitized as Complaint;
 };
 
-export const fetchMyComplaints = async (uid: string): Promise<Complaint[]> => {
-  const cutoff = getCutoffTimestamp();
-  // Using server-side orderBy and limit as requested. 
-  // Requires Composite Index: uid (Asc) + timestamp (Desc)
-  const q = query(
-    collection(db, COMPLAINTS_COL), 
-    where('uid', '==', uid),
-    where('timestamp', '>=', cutoff),
+/**
+ * Generic helper to perform the "Smart Filter" on a set of base constraints
+ */
+async function fetchSmartFiltered(baseConstraints: QueryConstraint[]): Promise<Complaint[]> {
+  const resolvedCutoff = getResolvedCutoff();
+
+  // Query 1: Active (Pending or In Progress) - No Time Limit
+  const activeQuery = query(
+    collection(db, COMPLAINTS_COL),
+    ...baseConstraints,
+    where('status', 'in', ['Pending', 'In Progress']),
     orderBy('timestamp', 'desc'),
     limit(FETCH_LIMIT)
   );
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => sanitizeData(doc.id, doc.data()));
+
+  // Query 2: Resolved - 3 Day Limit
+  const resolvedQuery = query(
+    collection(db, COMPLAINTS_COL),
+    ...baseConstraints,
+    where('status', '==', 'Resolved'),
+    where('timestamp', '>=', resolvedCutoff),
+    orderBy('timestamp', 'desc'),
+    limit(FETCH_LIMIT)
+  );
+
+  const [activeSnap, resolvedSnap] = await Promise.all([
+    getDocs(activeQuery),
+    getDocs(resolvedQuery)
+  ]);
+
+  const results = [
+    ...activeSnap.docs.map(d => sanitizeData(d.id, d.data())),
+    ...resolvedSnap.docs.map(d => sanitizeData(d.id, d.data()))
+  ];
+
+  // Combine, sort by newest, and cap total
+  return results
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, FETCH_LIMIT);
+}
+
+export const fetchMyComplaints = async (uid: string): Promise<Complaint[]> => {
+  return fetchSmartFiltered([where('uid', '==', uid)]);
 };
 
 export const fetchCommunityComplaints = async (floor: number): Promise<Complaint[]> => {
-  const cutoff = getCutoffTimestamp();
+  // We need to fetch for two distinct categories: Washroom (on floor) and Mess (global)
+  // Each must respect the Active + Recent Resolved logic.
   
-  // Query 1: Washroom complaints on student's floor (Last 15 days)
-  const washroomQuery = query(
-    collection(db, COMPLAINTS_COL),
+  const washroomResults = await fetchSmartFiltered([
     where('floor', '==', floor),
-    where('locationType', '==', 'Washroom'),
-    where('timestamp', '>=', cutoff),
-    orderBy('timestamp', 'desc'),
-    limit(FETCH_LIMIT)
-  );
+    where('locationType', '==', 'Washroom')
+  ]);
 
-  // Query 2: Mess complaints (Global, Last 15 days)
-  const messQuery = query(
-    collection(db, COMPLAINTS_COL), 
-    where('locationType', '==', 'Mess'),
-    where('timestamp', '>=', cutoff),
-    orderBy('timestamp', 'desc'),
-    limit(FETCH_LIMIT)
-  );
+  const messResults = await fetchSmartFiltered([
+    where('locationType', '==', 'Mess')
+  ]);
 
-  const [wSnap, mSnap] = await Promise.all([getDocs(washroomQuery), getDocs(messQuery)]);
-  
-  const results = [
-    ...wSnap.docs.map(d => sanitizeData(d.id, d.data())),
-    ...mSnap.docs.map(d => sanitizeData(d.id, d.data()))
-  ];
-
-  // Merge and re-sort since we combined two separate queries
-  return results.sort((a, b) => b.timestamp - a.timestamp).slice(0, FETCH_LIMIT);
+  const combined = [...washroomResults, ...messResults];
+  return combined
+    .sort((a, b) => b.timestamp - a.timestamp)
+    .slice(0, FETCH_LIMIT);
 };
 
 export const fetchFilteredComplaints = async (
@@ -112,29 +128,32 @@ export const fetchFilteredComplaints = async (
   category?: ComplaintCategory | 'All',
   status?: ComplaintStatus
 ): Promise<Complaint[]> => {
-  const cutoff = getCutoffTimestamp();
-  const constraints: QueryConstraint[] = [
-    where('timestamp', '>=', cutoff),
-    orderBy('timestamp', 'desc'),
-    limit(FETCH_LIMIT)
-  ];
+  const baseConstraints: QueryConstraint[] = [];
   
   if (floor !== 0) {
-    constraints.unshift(where('floor', '==', floor));
+    baseConstraints.push(where('floor', '==', floor));
   }
   
   if (category && category !== 'All') {
-    constraints.unshift(where('complaintCategory', '==', category));
-  }
-  
-  if (status) {
-    constraints.unshift(where('status', '==', status));
+    baseConstraints.push(where('complaintCategory', '==', category));
   }
 
-  const q = query(collection(db, COMPLAINTS_COL), ...constraints);
-  const snapshot = await getDocs(q);
-  
-  return snapshot.docs.map(doc => sanitizeData(doc.id, doc.data()));
+  // If a specific status is requested, handle accordingly
+  if (status) {
+    const constraints = [...baseConstraints, where('status', '==', status)];
+    
+    // If specifically viewing Resolved, apply the 3-day cleanup limit
+    if (status === 'Resolved') {
+      constraints.push(where('timestamp', '>=', getResolvedCutoff()));
+    }
+    
+    const q = query(collection(db, COMPLAINTS_COL), ...constraints, orderBy('timestamp', 'desc'), limit(FETCH_LIMIT));
+    const snap = await getDocs(q);
+    return snap.docs.map(doc => sanitizeData(doc.id, doc.data()));
+  }
+
+  // If status is "All" (not provided), use the smart split-logic
+  return fetchSmartFiltered(baseConstraints);
 };
 
 export const toggleSupport = async (complaintId: string, uid: string): Promise<void> => {

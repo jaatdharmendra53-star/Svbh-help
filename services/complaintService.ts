@@ -11,12 +11,17 @@ import {
   arrayRemove,
   getDoc,
   orderBy,
+  limit,
   QueryConstraint
 } from "firebase/firestore";
 import { db } from './firebase';
 import { Complaint, ComplaintStatus, ComplaintCategory } from '../types';
 
 const COMPLAINTS_COL = 'complaints';
+const FETCH_LIMIT = 50;
+const DAYS_TO_FETCH = 15;
+
+const getCutoffTimestamp = () => Date.now() - (DAYS_TO_FETCH * 24 * 60 * 60 * 1000);
 
 const sanitizeData = (docId: string, data: any): Complaint => {
   const sanitized: any = {
@@ -55,31 +60,51 @@ const sanitizeData = (docId: string, data: any): Complaint => {
 };
 
 export const fetchMyComplaints = async (uid: string): Promise<Complaint[]> => {
-  // Removing orderBy here because it requires a composite index (uid + timestamp).
-  // We sort manually in-memory to keep it Free-Tier friendly.
+  const cutoff = getCutoffTimestamp();
+  // Using server-side orderBy and limit as requested. 
+  // Requires Composite Index: uid (Asc) + timestamp (Desc)
   const q = query(
     collection(db, COMPLAINTS_COL), 
-    where('uid', '==', uid)
+    where('uid', '==', uid),
+    where('timestamp', '>=', cutoff),
+    orderBy('timestamp', 'desc'),
+    limit(FETCH_LIMIT)
   );
   const snapshot = await getDocs(q);
-  return snapshot.docs
-    .map(doc => sanitizeData(doc.id, doc.data()))
-    .sort((a, b) => b.timestamp - a.timestamp);
+  return snapshot.docs.map(doc => sanitizeData(doc.id, doc.data()));
 };
 
 export const fetchCommunityComplaints = async (floor: number): Promise<Complaint[]> => {
+  const cutoff = getCutoffTimestamp();
+  
+  // Query 1: Washroom complaints on student's floor (Last 15 days)
   const washroomQuery = query(
     collection(db, COMPLAINTS_COL),
     where('floor', '==', floor),
-    where('locationType', '==', 'Washroom')
+    where('locationType', '==', 'Washroom'),
+    where('timestamp', '>=', cutoff),
+    orderBy('timestamp', 'desc'),
+    limit(FETCH_LIMIT)
   );
-  const messQuery = query(collection(db, COMPLAINTS_COL), where('locationType', '==', 'Mess'));
+
+  // Query 2: Mess complaints (Global, Last 15 days)
+  const messQuery = query(
+    collection(db, COMPLAINTS_COL), 
+    where('locationType', '==', 'Mess'),
+    where('timestamp', '>=', cutoff),
+    orderBy('timestamp', 'desc'),
+    limit(FETCH_LIMIT)
+  );
+
   const [wSnap, mSnap] = await Promise.all([getDocs(washroomQuery), getDocs(messQuery)]);
+  
   const results = [
     ...wSnap.docs.map(d => sanitizeData(d.id, d.data())),
     ...mSnap.docs.map(d => sanitizeData(d.id, d.data()))
   ];
-  return results.sort((a, b) => b.timestamp - a.timestamp);
+
+  // Merge and re-sort since we combined two separate queries
+  return results.sort((a, b) => b.timestamp - a.timestamp).slice(0, FETCH_LIMIT);
 };
 
 export const fetchFilteredComplaints = async (
@@ -87,26 +112,29 @@ export const fetchFilteredComplaints = async (
   category?: ComplaintCategory | 'All',
   status?: ComplaintStatus
 ): Promise<Complaint[]> => {
-  const constraints: QueryConstraint[] = [];
+  const cutoff = getCutoffTimestamp();
+  const constraints: QueryConstraint[] = [
+    where('timestamp', '>=', cutoff),
+    orderBy('timestamp', 'desc'),
+    limit(FETCH_LIMIT)
+  ];
   
   if (floor !== 0) {
-    constraints.push(where('floor', '==', floor));
+    constraints.unshift(where('floor', '==', floor));
   }
   
   if (category && category !== 'All') {
-    constraints.push(where('complaintCategory', '==', category));
+    constraints.unshift(where('complaintCategory', '==', category));
   }
   
   if (status) {
-    constraints.push(where('status', '==', status));
+    constraints.unshift(where('status', '==', status));
   }
 
   const q = query(collection(db, COMPLAINTS_COL), ...constraints);
   const snapshot = await getDocs(q);
   
-  return snapshot.docs
-    .map(doc => sanitizeData(doc.id, doc.data()))
-    .sort((a, b) => b.timestamp - a.timestamp);
+  return snapshot.docs.map(doc => sanitizeData(doc.id, doc.data()));
 };
 
 export const toggleSupport = async (complaintId: string, uid: string): Promise<void> => {

@@ -182,8 +182,8 @@ const App: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {/* WARDEN FILTER AREA */}
-            <div className="bg-white px-6 py-6 border-b border-slate-200 sticky top-0 z-10 shadow-sm">
+            {/* WARDEN FILTER AREA - Z-INDEX INCREASED TO 40 TO OVERLAY CARDS */}
+            <div className="bg-white/95 backdrop-blur-md px-6 py-6 border-b border-slate-200 sticky top-0 z-[40] shadow-md transition-shadow">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="text-xl font-black text-slate-900 tracking-tight">Manage Feed</h2>
                 <div className="flex items-center bg-slate-100 rounded-xl px-3 py-1.5 gap-2 border border-slate-200">
